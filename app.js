@@ -12,6 +12,7 @@ var ngramTypeConfig = {
             tetragrams: tetragrams,
             words: words,
             custom_words: null,
+            wrongs: wrongs,
 
             data: {
                 source: 'bigrams',
@@ -69,6 +70,16 @@ var ngramTypeConfig = {
                     phrases: {},
                     phrasesCurrentIndex: 0,
                 },
+                wrongs: {
+                    scope: 50,
+                    combination: 2,
+                    repetition: 3,
+                    minimumWPM: 40,
+                    minimumAccuracy: 100,
+                    WPMs: [],
+                    phrases: {},
+                    phrasesCurrentIndex: 0,
+                },
             },
 
             phrases: [],
@@ -80,6 +91,7 @@ var ngramTypeConfig = {
             isInputCorrect: true,
             rawWPM: 0,
             accuracy: 0,
+            currentWordIndex: 0,
         }
     },
     computed: {
@@ -123,7 +135,6 @@ var ngramTypeConfig = {
                 this.expectedPhrase = dataSource.phrases[dataSource.phrasesCurrentIndex];
             }
         }
-
         else {
             this.refreshPhrases();
             this.updateDataVersion()
@@ -142,6 +153,7 @@ var ngramTypeConfig = {
         this.correctLetterSound = new Audio('./media/sounds/click.mp3');
         this.incorrectLetterSound = new Audio('./media/sounds/clack.mp3');
         this.incorrectPhraseSound = new Audio('./media/sounds/failed.mp3');
+        this.tooslowPhraseSound = new Audio('./media/sounds/tooslow.mp3');
         this.correctPhraseSound = new Audio('./media/sounds/ding.wav');
         this.currentPlayingSound = null;
     },
@@ -153,7 +165,6 @@ var ngramTypeConfig = {
             if ($.isEmptyObject(dataSource.phrases)) {
                 this.refreshPhrases();
             }
-
             else {
                 this.expectedPhrase = dataSource.phrases[dataSource.phrasesCurrentIndex];
                 // Save state in case of page reload.
@@ -230,6 +241,7 @@ var ngramTypeConfig = {
             if (
                 this.currentPlayingSound == this.correctPhraseSound
                 || this.currentPlayingSound == this.incorrectPhraseSound
+                || this.currentPlayingSound == this.tooslowPhraseSound
             ) {
                 return;
             }
@@ -261,13 +273,17 @@ var ngramTypeConfig = {
         generatePhrases: function(numberOfItemsToCombine, repetitions) {
             var dataSource = this.data['source'];
             var source = this[dataSource];
-            var scope = this.data[dataSource].scope
+            var scope = this.data[dataSource].scope;
 
             // Use indexing to limit scope of Ngrams.
             // Select the Top 50/100/150/200.
             // `Custom` has no scope.
             if (scope) {
-                source = source.slice(0, scope)
+                if (dataSource == 'wrongs') {
+                    source = Object.keys(source).sort((a, b) => a[1] - b[1]).slice(0, scope);
+                } else {
+                    source = source.slice(0, scope);
+                }
             }
 
             var ngrams = this.deepCopy(source);
@@ -288,7 +304,7 @@ var ngramTypeConfig = {
                 ngrams.splice(0, numberOfItemsToCombine);
             }
 
-            return phrases
+            return phrases;
         },
         pauseTimer: function(e) {
             var isStopped = $('.timer').countimer('stopped');
@@ -302,7 +318,7 @@ var ngramTypeConfig = {
                 $('.timer').countimer('resume');
             }
         },
-        keyHandler: function(e) {
+        keyDownHandler: function(e) {
             var key = e.key;
 
             // For other miscellaneous keys.
@@ -337,20 +353,6 @@ var ngramTypeConfig = {
                 this.hitsWrong += 1;
             }
 
-            let expectedWords = this.expectedPhrase.split(/(\s+)/);
-             let typedWords = typedPhrase.split(/(\s+)/);
-
-             // determine the current word index that a user is typing
-             let currentWordIndex = 0;
-             for (let i = 0; i < typedWords.length; i++) {
-               if (typedWords[i] === expectedWords[i]) {
-                 currentWordIndex = i + 1;
-               } else {
-                 break;
-               }
-             }
-             this.currentWordIndex = currentWordIndex;
-
             if (typedPhrase.trimEnd() === this.expectedPhrase) {
                 var currentTime = new Date().getTime() / 1000;
                 this.rawWPM = Math.round(
@@ -365,7 +367,18 @@ var ngramTypeConfig = {
                 var dataSource = this.dataSource;
                 if (
                     this.rawWPM < dataSource.minimumWPM
-                    || this.accuracy < dataSource.minimumAccuracy
+                ) {
+                    if (this.data.soundFailedThresholdEnabled) {
+                        this.stopCurrentPlayingSound();
+                        this.tooslowPhraseSound.play();
+                        this.currentPlayingSound = this.tooslowPhraseSound;
+                    }
+                    this.resetCurrentPhraseMetrics();
+                    this.pauseTimer()
+                    return;
+                }
+                if (
+                    this.accuracy < dataSource.minimumAccuracy
                 ) {
                     if (this.data.soundFailedThresholdEnabled) {
                         this.stopCurrentPlayingSound();
@@ -393,12 +406,49 @@ var ngramTypeConfig = {
                 this.nextPhrase();
             }
         },
+        keyUpHandler: function(e) {
+            var key = e.key;
+
+            // For other miscellaneous keys.
+            if (key.length > 1) {
+                return;
+            }
+
+            // Remove spaces at starting of the phrase
+            var typedPhrase = this.typedPhrase.trimStart();
+            if (!typedPhrase.length) {
+                return;
+            }
+
+            let expectedWords = this.expectedPhrase.split(/(\s+)/);
+            let typedWords = typedPhrase.split(/(\s+)/);
+
+            // determine the current word index that a user is typing
+            let currentWordIndex = 0;
+            for (let i = 0; i < typedWords.length; i++) {
+              if (typedWords[i] === expectedWords[i]) {
+                currentWordIndex = i + 1;
+              } else {
+                break;
+              }
+            }
+            this.currentWordIndex = currentWordIndex;
+
+            if (!this.isInputCorrect) {
+                const wrongs = this['wrongs'];
+                let expectedWord = expectedWords[currentWordIndex];
+                if (expectedWord in wrongs) {
+                    wrongs[expectedWord]++;
+                } else {
+                    wrongs[expectedWord] = 1;
+                }
+            } 
+        },
         resetCurrentPhraseMetrics: function() {
             this.hitsCorrect = 0;
             this.hitsWrong = 0;
             this.typedPhrase = '';
             this.isInputCorrect = true;
-            this.currentWordIndex = 0;
         },
         nextPhrase: function() {
             this.resetCurrentPhraseMetrics();
