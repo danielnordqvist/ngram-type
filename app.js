@@ -155,6 +155,7 @@ var ngramTypeConfig = {
         this.incorrectPhraseSound = new Audio('./media/sounds/failed.mp3');
         this.tooslowPhraseSound = new Audio('./media/sounds/tooslow.mp3');
         this.correctPhraseSound = new Audio('./media/sounds/ding.wav');
+        this.tooslowPhraseSound = new Audio('./media/sounds/tooslow.mp3');
         this.currentPlayingSound = null;
     },
     watch: {
